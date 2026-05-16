@@ -5,6 +5,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import requests
+from datetime import datetime, timezone # تم إضافة timezone هنا
 
 from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI, FRONTEND_ORIGIN
 from utils.firebase_config import users_ref, sessions_ref
@@ -27,13 +28,11 @@ def signup():
         if not (email and username and password):
             return jsonify({"success": False, "msg": "Missing required fields"}), 400
 
-        # Check for existing email or username
         if users_ref.where(filter=FieldFilter('email', '==', email)).get():
             return jsonify({"success": False, "msg": "Email already exists"}), 400
         if users_ref.where(filter=FieldFilter('username', '==', username)).get():
             return jsonify({"success": False, "msg": "Username already exists"}), 400
 
-        # Hash password and create user
         hashed = generate_password_hash(password)
         user_ref = users_ref.document()
         user_ref.set({
@@ -76,7 +75,7 @@ def login():
         if not (user_input and password):
             return jsonify({"success": False, "msg": "All fields are required"}), 400
 
-        # Search by email first, then username
+        # أقصى مدة لانتظار الفايربيس عشان الـ Gunicorn ميعلقش
         query = users_ref.where(filter=FieldFilter("email", "==", user_input.lower())).get()
         if not query:
             query = users_ref.where(filter=FieldFilter("username", "==", user_input)).get()
@@ -88,7 +87,6 @@ def login():
         user_data = user_doc.to_dict()
         user_id = user_doc.id
 
-        # Verify password
         if not check_password_hash(user_data["password"], password):
             return jsonify({"success": False, "msg": "Invalid username/email or password"}), 401
 
@@ -108,6 +106,8 @@ def login():
 
     except Exception as e:
         print("Login error:", e)
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "msg": f"Server error: {str(e)}"}), 500
 
 @auth_bp.route("/google-callback")
@@ -117,7 +117,6 @@ def google_callback():
         if not code:
             return redirect(f"{FRONTEND_ORIGIN}/?error=no_code")
 
-        # Exchange code for token
         token_url = "https://oauth2.googleapis.com/token"
         data = {
             "code": code,
@@ -126,7 +125,8 @@ def google_callback():
             "redirect_uri": REDIRECT_URI,
             "grant_type": "authorization_code"
         }
-        r = requests.post(token_url, data=data)
+        # إضافة timeout=10 هنا عشان لو سيرفر جوجل اتأخر الكود ميعلقش السيرفر كله
+        r = requests.post(token_url, data=data, timeout=10)
 
         if not r.ok:
             print("Token exchange failed:", r.status_code, r.text)
@@ -137,14 +137,12 @@ def google_callback():
         if not google_id_token:
             return redirect(f"{FRONTEND_ORIGIN}/?error=no_token")
 
-        # Verify Google ID token
         idinfo = id_token.verify_oauth2_token(google_id_token, google_requests.Request(), GOOGLE_CLIENT_ID)
 
         email = idinfo.get("email")
         name = idinfo.get("name")
         google_user_id = idinfo.get("sub")
 
-        # Search for user or create new
         query = users_ref.where(filter=FieldFilter("email", "==", email)).get()
         if query:
             user_doc = query[0]
@@ -183,9 +181,7 @@ def logout():
 
 @auth_bp.get("/verify-session")
 def verify_session():
-    """التحقق من صلاحية الـ session"""
     try:
-        from datetime import datetime, timezone
         token = request.headers.get("Authorization", "").replace("Bearer ", "")
         if not token:
             return jsonify({"success": False, "msg": "No token provided"}), 401
@@ -197,11 +193,14 @@ def verify_session():
         session_data = session_doc.to_dict()
         expires_at = session_data.get("expires_at")
 
+        # معالجة سليمة وآمنة للـ تضارب الـ Timezones ومنع الـ Crash
         if expires_at:
-            if hasattr(expires_at, 'timestamp'):
-                expires_at = datetime.fromtimestamp(expires_at.timestamp(), tz=timezone.utc).replace(tzinfo=None)
-            
-            if datetime.utcnow() > expires_at:
+            if hasattr(expires_at, 'tzinfo') and expires_at.tzinfo is not None:
+                now = datetime.now(timezone.utc)
+            else:
+                now = datetime.utcnow()
+
+            if now > expires_at:
                 sessions_ref.document(token).delete()
                 return jsonify({"success": False, "msg": "Session expired"}), 401
 
