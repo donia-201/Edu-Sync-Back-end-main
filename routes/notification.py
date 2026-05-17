@@ -70,7 +70,7 @@ def create_notification():
         doc_ref = db.collection("notifications").add(notif_data)[1]
         notif_data["id"] = doc_ref.id
 
-        print(f" Notification saved for user {user_id}: {notif_data['title']}")
+        print(f"✅ Notification saved for user {user_id}: {notif_data['title']}")
         return jsonify({"success": True, "notification": notif_data}), 201
 
     except Exception as e:
@@ -129,7 +129,7 @@ def delete_notification(notification_id):
             return jsonify({"success": False, "msg": "Unauthorized"}), 403
 
         notif_ref.delete()
-        print(f" Notification {notification_id} deleted")
+        print(f"✅ Notification {notification_id} deleted")
         return jsonify({"success": True, "msg": "Notification deleted successfully"})
 
     except Exception as e:
@@ -175,7 +175,7 @@ def process_event_reminders():
                 # Create notification in Firestore
                 db.collection("notifications").add({
                     "user_id": event["user_id"],
-                    "title": f" Reminder: {title_text}",
+                    "title": f"📅 Reminder: {title_text}",
                     "message": f'Your event "{title_text}" is starting soon!',
                     "type": "event",
                     "is_read": False,
@@ -185,10 +185,10 @@ def process_event_reminders():
                 # Mark reminder as sent so it doesn't fire again
                 events_ref.document(doc.id).update({"reminder_sent": True})
                 count += 1
-                print(f" Reminder sent for event: {title_text}")
+                print(f"✅ Reminder sent for event: {title_text}")
 
         if count:
-            print(f" Processed {count} event reminder(s)")
+            print(f"✅ Processed {count} event reminder(s)")
 
     except Exception as e:
         print(f" Process reminders error: {e}")
